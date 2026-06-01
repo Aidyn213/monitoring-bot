@@ -233,11 +233,11 @@ def format_report(rows, filename):
         counts[r['status']] = counts.get(r['status'], 0) + 1
  
     lines = [
-        f"Мониторинг цен — {date_str}\n",
-        f"Вне рынка (>=+15%): {counts.get('Вне рынка', 0)} поз.",
-        f"Дороже (0%..+15%): {counts.get('Дороже', 0)} поз.",
-        f"Норма (-5%..0%): {counts.get('Норма', 0)} поз.",
-        f"Дешевле (<-5%): {counts.get('Дешевле', 0)} поз.\n",
+        f"📊 Мониторинг цен — {date_str}\n",
+        f"🔴 Вне рынка (>=+15%): {counts.get('Вне рынка', 0)} поз.",
+        f"🟡 Дороже (0%..+15%): {counts.get('Дороже', 0)} поз.",
+        f"⚪ Норма (-5%..0%): {counts.get('Норма', 0)} поз.",
+        f"🟢 Дешевле (<-5%): {counts.get('Дешевле', 0)} поз.\n",
     ]
  
     SEG_ORDER = ['HARD', 'SOFT', 'СЕЗОН']
@@ -278,17 +278,17 @@ def format_report(rows, filename):
         elif r['status'] == 'Дороже':
             km_stats[km]['дороже'] += 1
  
-    lines.append("По ответственным (не в норме):")
+    lines.append("👤 По ответственным (не в норме):")
     for km, s in sorted(km_stats.items(), key=lambda x: -(x[1]['вне'] + x[1]['дороже'])):
         not_ok = s['вне'] + s['дороже']
         if not_ok == 0:
             continue
         lines.append(
-            f"• {km}: {s['вне']} вне рынка, {s['дороже']} дороже (из {s['total']} поз.)"
+            f"• {km}: 🔴 {s['вне']} вне рынка, 🟡 {s['дороже']} дороже (из {s['total']} поз.)"
         )
  
     lines.append("")
-    lines.append("Ср. цена рынка = Eurospar, Carefood, METRO, Toimart, среднее двух Small (Райымбека + Ауэзова). Оптовка и Рынок Турксиб исключены. Каспий — справочно.")
+    lines.append("ℹ️ Ср. цена рынка = Eurospar, Carefood, METRO, Toimart, среднее двух Small (Райымбека + Ауэзова). Оптовка и Рынок Турксиб исключены. Каспий — справочно.")
  
     return "\n".join(lines)
  
