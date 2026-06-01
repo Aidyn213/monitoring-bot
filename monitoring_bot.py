@@ -63,11 +63,12 @@ def run_analysis(file_bytes):
  
         avg  = round(statistics.mean(market))
         mn   = min(market)
+        mx   = max(market)
         info = lookup(name)
  
         if magnum:
             pct = round((magnum - avg) / avg * 100, 1)
-            if pct >= 15:    status = 'РИСК'
+            if pct >= 15:    status = 'Вне рынка'
             elif pct >= 0:   status = 'Дороже'
             elif pct >= -5:  status = 'Норма'
             else:            status = 'Дешевле'
@@ -75,7 +76,7 @@ def run_analysis(file_bytes):
             pct, status = None, 'Нет цены'
  
         rows.append(dict(segment=segment, name=name, magnum=magnum, kaspi=kaspi,
-                         avg=avg, min=mn, pct=pct, status=status,
+                         avg=avg, min=mn, max=mx, pct=pct, status=status,
                          km=info['km'], brand=info['brand']))
     return rows
  
@@ -87,12 +88,12 @@ def build_excel(rows):
     SEG_FILLS = {'HARD':  PatternFill('solid', start_color='C6EFCE'),
                  'SOFT':  PatternFill('solid', start_color='DDEBF7'),
                  'СЕЗОН': PatternFill('solid', start_color='FFF2CC')}
-    SF = {'РИСК':     PatternFill('solid', start_color='FFC7CE'),
+    SF = {'Вне рынка':     PatternFill('solid', start_color='FFC7CE'),
           'Дороже':   PatternFill('solid', start_color='FFEB9C'),
           'Норма':    PatternFill('solid', start_color='FFFFFF'),
           'Дешевле':  PatternFill('solid', start_color='C6EFCE'),
           'Нет цены': PatternFill('solid', start_color='EDEDED')}
-    SFONTS = {'РИСК':     Font(name=FN, color='9C0006', bold=True, size=10),
+    SFONTS = {'Вне рынка':     Font(name=FN, color='9C0006', bold=True, size=10),
               'Дороже':   Font(name=FN, color='9C6500', size=10),
               'Норма':    Font(name=FN, size=10),
               'Дешевле':  Font(name=FN, color='276221', size=10),
@@ -180,55 +181,58 @@ def format_report(rows, filename):
         counts[r['status']] = counts.get(r['status'], 0) + 1
  
     lines = [
-        f"📊 Мониторинг цен — {date_str}",
-        f"🔴 Риск: {counts.get('РИСК', 0)}  "
-        f"🟡 Дороже: {counts.get('Дороже', 0)}  "
-        f"⚪ Норма: {counts.get('Норма', 0)}  "
-        f"🟢 Дешевле: {counts.get('Дешевле', 0)}\n",
+        f"📊 Мониторинг цен — {date_str}\n",
+        f"🔴 Вне рынка (≥+15%): {counts.get('Вне рынка', 0)} поз.",
+        f"🟡 Дороже (0%..+15%): {counts.get('Дороже', 0)} поз.",
+        f"⚪ Норма (-5%..0%): {counts.get('Норма', 0)} поз.",
+        f"🟢 Дешевле (<-5%): {counts.get('Дешевле', 0)} поз.\n",
     ]
  
-    # ТОП рисков по сегментам: HARD → SOFT → СЕЗОН
+    # Позиции «Вне рынка» по сегментам: HARD → SOFT → СЕЗОН
     SEG_ORDER = ['HARD', 'SOFT', 'СЕЗОН']
-    not_ok_statuses = {'РИСК', 'Дороже'}
  
     for seg in SEG_ORDER:
         seg_risks = sorted(
             [r for r in rows if r['segment'] == seg
-             and r['status'] == 'РИСК' and r.get('pct') and r['name'] != 'АВОКАДО КГ'],
+             and r['status'] == 'Вне рынка' and r.get('pct') and r['name'] != 'АВОКАДО КГ'],
             key=lambda x: -x['pct'])
         if not seg_risks:
             continue
         lines.append(f"— {seg} —")
         for r in seg_risks:
             kaspi_str = f" | Каспий: {r['kaspi']:,}" if r['kaspi'] else ""
+            corridor = f"{r['min']:,} – {r['max']:,}" if r.get('max') else f"от {r['min']:,}"
             lines.append(
                 f"• {r['name']}\n"
-                f"  Магнум: {r['magnum']:,} | Рынок: {r['avg']:,}{kaspi_str} | +{r['pct']}%\n"
+                f"  Магнум: {r['magnum']:,} | Ср.рынок: {r['avg']:,} (коридор: {corridor}){kaspi_str} | +{r['pct']}%\n"
                 f"  КМ: {r['km']}"
             )
         lines.append("")
  
-    # Сводка по КМ — позиции не в норме (Риск + Дороже)
+    # Сводка по КМ — позиции не в норме (Вне рынка + Дороже)
     km_stats = {}
     for r in rows:
         km = r['km']
         if km == '—':
             continue
-        km_stats.setdefault(km, {'риск': 0, 'дороже': 0, 'total': 0})
+        km_stats.setdefault(km, {'вне': 0, 'дороже': 0, 'total': 0})
         km_stats[km]['total'] += 1
-        if r['status'] == 'РИСК':
-            km_stats[km]['риск'] += 1
+        if r['status'] == 'Вне рынка':
+            km_stats[km]['вне'] += 1
         elif r['status'] == 'Дороже':
             km_stats[km]['дороже'] += 1
  
     lines.append("👤 По ответственным (не в норме):")
-    for km, s in sorted(km_stats.items(), key=lambda x: -(x[1]['риск'] + x[1]['дороже'])):
-        not_ok = s['риск'] + s['дороже']
+    for km, s in sorted(km_stats.items(), key=lambda x: -(x[1]['вне'] + x[1]['дороже'])):
+        not_ok = s['вне'] + s['дороже']
         if not_ok == 0:
             continue
         lines.append(
-            f"• {km}: 🔴 {s['риск']} риск, 🟡 {s['дороже']} дороже (из {s['total']} поз.)"
+            f"• {km}: 🔴 {s['вне']} вне рынка, 🟡 {s['дороже']} дороже (из {s['total']} поз.)"
         )
+ 
+    lines.append("")
+    lines.append("ℹ️ Ср. цена рынка = Eurospar, Carefood, METRO, Toimart, среднее двух Small (Райымбека + Ауэзова). Оптовка и Рынок Турксиб исключены. Каспий — справочно.")
  
     return "\n".join(lines)
  
