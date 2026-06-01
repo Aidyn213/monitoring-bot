@@ -281,3 +281,7 @@ def handle_text(message):
  
 print("✅ Бот запущен (облачный режим)")
 bot.infinity_polling()
+    bot.reply_to(message, "Пришлите файл мониторинга в формате .xlsx 📎")
+ 
+print("✅ Бот запущен (облачный режим)")
+bot.infinity_polling()
