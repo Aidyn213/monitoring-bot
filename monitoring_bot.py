@@ -47,17 +47,21 @@ def run_analysis(file_bytes):
     SMALL_IDXS  = [7, 10]
     KASPI_IDX   = 2
  
+    def g(row, i):
+        try: return row[i]
+        except (IndexError, TypeError): return None
+ 
     segment, rows = None, []
     for row in ws_src.iter_rows(min_row=8, max_row=65, values_only=True):
-        name = row[0]
+        name = g(row, 0)
         if name in ('HARD', 'SOFT', 'СЕЗОН'):
             segment = name; continue
         if not name or name == '(пусто)': continue
  
-        magnum = row[1]
-        kaspi  = row[KASPI_IDX]
-        market = [row[i] for i in MARKET_IDXS if row[i] is not None]
-        smalls = [row[i] for i in SMALL_IDXS  if row[i] is not None]
+        magnum = g(row, 1)
+        kaspi  = g(row, KASPI_IDX)
+        market = [g(row, i) for i in MARKET_IDXS if g(row, i) is not None]
+        smalls = [g(row, i) for i in SMALL_IDXS  if g(row, i) is not None]
         if smalls: market.append(round(statistics.mean(smalls)))
         if not market: continue
  
