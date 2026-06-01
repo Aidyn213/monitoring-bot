@@ -1,4 +1,3 @@
-nitoring bot · PY
 """
 Magnum Monitoring Bot — облачная версия
 Пользователь присылает xlsx → бот анализирует → отвечает отчётом + Excel
@@ -64,10 +63,13 @@ def run_analysis(file_bytes):
             segment = name; continue
         if not name or name == '(пусто)': continue
  
-        magnum = g(row, 1)
-        kaspi  = g(row, KASPI_IDX)
-        market = [g(row, i) for i in MARKET_IDXS if g(row, i) is not None]
-        smalls = [g(row, i) for i in SMALL_IDXS  if g(row, i) is not None]
+        def num(val):
+            return val if isinstance(val, (int, float)) else None
+ 
+        magnum = num(g(row, 1))
+        kaspi  = num(g(row, KASPI_IDX))
+        market = [num(g(row, i)) for i in MARKET_IDXS if isinstance(g(row, i), (int, float))]
+        smalls = [num(g(row, i)) for i in SMALL_IDXS  if isinstance(g(row, i), (int, float))]
         if smalls: market.append(round(statistics.mean(smalls)))
         if not market: continue
  
