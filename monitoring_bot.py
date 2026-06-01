@@ -1,3 +1,4 @@
+nitoring bot · PY
 """
 Magnum Monitoring Bot — облачная версия
 Пользователь присылает xlsx → бот анализирует → отвечает отчётом + Excel
@@ -22,9 +23,14 @@ def load_brands():
     try:
         wb = load_workbook("Маппинг.xlsx", data_only=True)
         for row in wb['Бренды'].iter_rows(min_row=2, max_row=wb['Бренды'].max_row, values_only=True):
-            if row[0] and row[1] != 'Закрыто':
-                brands[str(row[0]).strip().upper()] = {
-                    'km': row[1] or '—', 'brand': row[4] or '—'}
+            try:
+                if row[0] and (len(row) < 2 or row[1] != 'Закрыто'):
+                    km    = row[1] if len(row) > 1 else '—'
+                    brand = row[4] if len(row) > 4 else '—'
+                    brands[str(row[0]).strip().upper()] = {
+                        'km': km or '—', 'brand': brand or '—'}
+            except (IndexError, TypeError):
+                continue
     except Exception:
         pass
     return brands
