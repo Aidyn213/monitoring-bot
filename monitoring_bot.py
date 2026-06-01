@@ -5,7 +5,9 @@ Magnum Monitoring Bot — облачная версия
  
 import os
 import io
+import re
 import statistics
+import traceback
 import telebot
 import requests
 from openpyxl import Workbook, load_workbook
@@ -16,12 +18,13 @@ from datetime import datetime
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 bot = telebot.TeleBot(BOT_TOKEN)
  
+ 
 # ── Загрузка маппинга брендов ────────────────────────────────────────────────
 def load_brands():
     brands = {}
     try:
         wb = load_workbook("Маппинг.xlsx", data_only=True)
-        for row in wb['Бренды'].iter_rows(min_row=2, max_row=wb['Бренды'].max_row, values_only=True):
+        for row in wb['Бренды'].iter_rows(min_row=2, values_only=True):
             try:
                 if row[0] and (len(row) < 2 or row[1] != 'Закрыто'):
                     km    = row[1] if len(row) > 1 else '—'
@@ -36,42 +39,67 @@ def load_brands():
  
 BRANDS = load_brands()
  
+ 
 def lookup(name):
     key = name.strip().upper()
-    if key in BRANDS: return BRANDS[key]
+    if key in BRANDS:
+        return BRANDS[key]
     for k, v in BRANDS.items():
-        if key in k or k in key: return v
+        if key in k or k in key:
+            return v
     return {'km': '—', 'brand': '—'}
+ 
  
 # ── Анализ ───────────────────────────────────────────────────────────────────
 def run_analysis(file_bytes):
     wb_src = load_workbook(io.BytesIO(file_bytes), data_only=True)
-    ws_src = wb_src['Тепловая карта']
+ 
+    if 'Тепловая карта' in wb_src.sheetnames:
+        ws_src = wb_src['Тепловая карта']
+    else:
+        ws_src = wb_src.active
  
     MARKET_IDXS = [4, 5, 6, 8]
     SMALL_IDXS  = [7, 10]
     KASPI_IDX   = 2
  
     def g(row, i):
-        try: return row[i]
-        except (IndexError, TypeError): return None
+        try:
+            return row[i]
+        except (IndexError, TypeError):
+            return None
  
-    segment, rows = None, []
-    for row in ws_src.iter_rows(min_row=8, max_row=65, values_only=True):
+    def num(val):
+        return val if isinstance(val, (int, float)) else None
+ 
+    segment = None
+    rows = []
+    empty_count = 0
+ 
+    for row in ws_src.iter_rows(min_row=8, values_only=True):
         name = g(row, 0)
-        if name in ('HARD', 'SOFT', 'СЕЗОН'):
-            segment = name; continue
-        if not name or name == '(пусто)': continue
  
-        def num(val):
-            return val if isinstance(val, (int, float)) else None
+        if not name:
+            empty_count += 1
+            if empty_count >= 5:
+                break
+            continue
+        empty_count = 0
+ 
+        if name in ('HARD', 'SOFT', 'СЕЗОН'):
+            segment = name
+            continue
+        if name == '(пусто)':
+            continue
  
         magnum = num(g(row, 1))
         kaspi  = num(g(row, KASPI_IDX))
         market = [num(g(row, i)) for i in MARKET_IDXS if isinstance(g(row, i), (int, float))]
         smalls = [num(g(row, i)) for i in SMALL_IDXS  if isinstance(g(row, i), (int, float))]
-        if smalls: market.append(round(statistics.mean(smalls)))
-        if not market: continue
+        if smalls:
+            market.append(round(statistics.mean(smalls)))
+        if not market:
+            continue
  
         avg  = round(statistics.mean(market))
         mn   = min(market)
@@ -80,10 +108,14 @@ def run_analysis(file_bytes):
  
         if magnum:
             pct = round((magnum - avg) / avg * 100, 1)
-            if pct >= 15:    status = 'Вне рынка'
-            elif pct >= 0:   status = 'Дороже'
-            elif pct >= -5:  status = 'Норма'
-            else:            status = 'Дешевле'
+            if pct >= 15:
+                status = 'Вне рынка'
+            elif pct >= 0:
+                status = 'Дороже'
+            elif pct >= -5:
+                status = 'Норма'
+            else:
+                status = 'Дешевле'
         else:
             pct, status = None, 'Нет цены'
  
@@ -92,24 +124,31 @@ def run_analysis(file_bytes):
                          km=info['km'], brand=info['brand']))
     return rows
  
+ 
 # ── Генерация Excel ──────────────────────────────────────────────────────────
 def build_excel(rows):
     FN = 'Arial'
     HDR_FILL = PatternFill('solid', start_color='1F3864')
     HDR_FONT = Font(name=FN, bold=True, color='FFFFFF', size=10)
-    SEG_FILLS = {'HARD':  PatternFill('solid', start_color='C6EFCE'),
-                 'SOFT':  PatternFill('solid', start_color='DDEBF7'),
-                 'СЕЗОН': PatternFill('solid', start_color='FFF2CC')}
-    SF = {'Вне рынка':     PatternFill('solid', start_color='FFC7CE'),
-          'Дороже':   PatternFill('solid', start_color='FFEB9C'),
-          'Норма':    PatternFill('solid', start_color='FFFFFF'),
-          'Дешевле':  PatternFill('solid', start_color='C6EFCE'),
-          'Нет цены': PatternFill('solid', start_color='EDEDED')}
-    SFONTS = {'Вне рынка':     Font(name=FN, color='9C0006', bold=True, size=10),
-              'Дороже':   Font(name=FN, color='9C6500', size=10),
-              'Норма':    Font(name=FN, size=10),
-              'Дешевле':  Font(name=FN, color='276221', size=10),
-              'Нет цены': Font(name=FN, color='7F7F7F', size=10)}
+    SEG_FILLS = {
+        'HARD':  PatternFill('solid', start_color='C6EFCE'),
+        'SOFT':  PatternFill('solid', start_color='DDEBF7'),
+        'СЕЗОН': PatternFill('solid', start_color='FFF2CC'),
+    }
+    SF = {
+        'Вне рынка': PatternFill('solid', start_color='FFC7CE'),
+        'Дороже':    PatternFill('solid', start_color='FFEB9C'),
+        'Норма':     PatternFill('solid', start_color='FFFFFF'),
+        'Дешевле':   PatternFill('solid', start_color='C6EFCE'),
+        'Нет цены':  PatternFill('solid', start_color='EDEDED'),
+    }
+    SFONTS = {
+        'Вне рынка': Font(name=FN, color='9C0006', bold=True, size=10),
+        'Дороже':    Font(name=FN, color='9C6500', size=10),
+        'Норма':     Font(name=FN, size=10),
+        'Дешевле':   Font(name=FN, color='276221', size=10),
+        'Нет цены':  Font(name=FN, color='7F7F7F', size=10),
+    }
     NORM = Font(name=FN, size=10)
     BOLD = Font(name=FN, bold=True, size=10)
     thin = Side(style='thin', color='BFBFBF')
@@ -117,11 +156,13 @@ def build_excel(rows):
  
     def cs(ws, r, c, val, fill=None, font=None, align='left', num_fmt=None, bold=False):
         cell = ws.cell(row=r, column=c, value=val)
-        if fill:   cell.fill = fill
+        if fill:
+            cell.fill = fill
         cell.font      = font or (BOLD if bold else NORM)
         cell.alignment = Alignment(horizontal=align, vertical='center')
         cell.border    = BRD
-        if num_fmt: cell.number_format = num_fmt
+        if num_fmt:
+            cell.number_format = num_fmt
  
     wb  = Workbook()
     ws1 = wb.active
@@ -129,7 +170,7 @@ def build_excel(rows):
     ws1.freeze_panes = 'B3'
     date_str = datetime.now().strftime('%d.%m.%Y')
  
-    HEADERS = ['Товар','Сегмент','Магнум','Ср.рынок','Откл, %','Статус','Каспий','Мин','КМ','Бренд']
+    HEADERS = ['Товар', 'Сегмент', 'Магнум', 'Ср.рынок', 'Откл, %', 'Статус', 'Каспий', 'Мин', 'КМ', 'Бренд']
     WIDTHS  = [42, 8, 9, 9, 10, 11, 9, 9, 22, 18]
  
     ws1.merge_cells('A1:J1')
@@ -150,7 +191,7 @@ def build_excel(rows):
         if seg != prev_seg:
             ws1.merge_cells(start_row=r, start_column=1, end_row=r, end_column=10)
             sc = ws1.cell(row=r, column=1, value=f'  {seg}')
-            sc.fill = SEG_FILLS[seg]
+            sc.fill = SEG_FILLS.get(seg, PatternFill())
             sc.font = Font(name=FN, bold=True, size=10)
             sc.alignment = Alignment(horizontal='left', vertical='center')
             sc.border = BRD
@@ -177,32 +218,29 @@ def build_excel(rows):
     buf.seek(0)
     return buf
  
+ 
 # ── Текстовый отчёт ──────────────────────────────────────────────────────────
 def extract_date(filename):
-    """Извлечь дату из имени файла, например 'Тепловая карта 29.05.xlsx' → '29.05'"""
-    import re
-    m = re.search(r'(\d{1,2}[.\-]\d{2}(?:[.\-]\d{2,4})?)', filename)
+    m = re.search(r'(\d{1,2}[.,\-]\d{2}(?:[.,\-]\d{2,4})?)', filename)
     return m.group(1) if m else datetime.now().strftime('%d.%m')
+ 
  
 def format_report(rows, filename):
     date_str = extract_date(filename)
  
-    # Счётчики
     counts = {}
     for r in rows:
         counts[r['status']] = counts.get(r['status'], 0) + 1
  
     lines = [
-        f"📊 Мониторинг цен — {date_str}\n",
-        f"🔴 Вне рынка (≥+15%): {counts.get('Вне рынка', 0)} поз.",
-        f"🟡 Дороже (0%..+15%): {counts.get('Дороже', 0)} поз.",
-        f"⚪ Норма (-5%..0%): {counts.get('Норма', 0)} поз.",
-        f"🟢 Дешевле (<-5%): {counts.get('Дешевле', 0)} поз.\n",
+        f"Мониторинг цен — {date_str}\n",
+        f"Вне рынка (>=+15%): {counts.get('Вне рынка', 0)} поз.",
+        f"Дороже (0%..+15%): {counts.get('Дороже', 0)} поз.",
+        f"Норма (-5%..0%): {counts.get('Норма', 0)} поз.",
+        f"Дешевле (<-5%): {counts.get('Дешевле', 0)} поз.\n",
     ]
  
-    # Позиции «Вне рынка» по сегментам: HARD → SOFT → СЕЗОН
     SEG_ORDER = ['HARD', 'SOFT', 'СЕЗОН']
- 
     for seg in SEG_ORDER:
         seg_risks = sorted(
             [r for r in rows if r['segment'] == seg
@@ -212,16 +250,22 @@ def format_report(rows, filename):
             continue
         lines.append(f"— {seg} —")
         for r in seg_risks:
-            kaspi_str = f" | Каспий: {r['kaspi']:,}" if r['kaspi'] else ""
-            corridor = f"{r['min']:,} – {r['max']:,}" if r.get('max') else f"от {r['min']:,}"
+            kaspi_str = f" | Каспий: {int(r['kaspi']):,}" if r['kaspi'] else ""
+            mn = r.get('min')
+            mx = r.get('max')
+            if mn is not None and mx is not None:
+                corridor = f"{int(mn):,} – {int(mx):,}"
+            elif mn is not None:
+                corridor = f"от {int(mn):,}"
+            else:
+                corridor = "—"
             lines.append(
                 f"• {r['name']}\n"
-                f"  Магнум: {r['magnum']:,} | Ср.рынок: {r['avg']:,} (коридор: {corridor}){kaspi_str} | +{r['pct']}%\n"
+                f"  Магнум: {int(r['magnum']):,} | Ср.рынок: {int(r['avg']):,} (коридор: {corridor}){kaspi_str} | +{r['pct']}%\n"
                 f"  КМ: {r['km']}"
             )
         lines.append("")
  
-    # Сводка по КМ — позиции не в норме (Вне рынка + Дороже)
     km_stats = {}
     for r in rows:
         km = r['km']
@@ -234,19 +278,20 @@ def format_report(rows, filename):
         elif r['status'] == 'Дороже':
             km_stats[km]['дороже'] += 1
  
-    lines.append("👤 По ответственным (не в норме):")
+    lines.append("По ответственным (не в норме):")
     for km, s in sorted(km_stats.items(), key=lambda x: -(x[1]['вне'] + x[1]['дороже'])):
         not_ok = s['вне'] + s['дороже']
         if not_ok == 0:
             continue
         lines.append(
-            f"• {km}: 🔴 {s['вне']} вне рынка, 🟡 {s['дороже']} дороже (из {s['total']} поз.)"
+            f"• {km}: {s['вне']} вне рынка, {s['дороже']} дороже (из {s['total']} поз.)"
         )
  
     lines.append("")
-    lines.append("ℹ️ Ср. цена рынка = Eurospar, Carefood, METRO, Toimart, среднее двух Small (Райымбека + Ауэзова). Оптовка и Рынок Турксиб исключены. Каспий — справочно.")
+    lines.append("Ср. цена рынка = Eurospar, Carefood, METRO, Toimart, среднее двух Small (Райымбека + Ауэзова). Оптовка и Рынок Турксиб исключены. Каспий — справочно.")
  
     return "\n".join(lines)
+ 
  
 # ── Хендлеры ─────────────────────────────────────────────────────────────────
 @bot.message_handler(content_types=['document'])
@@ -256,32 +301,31 @@ def handle_document(message):
         bot.reply_to(message, "Пришлите файл в формате .xlsx")
         return
  
-    bot.reply_to(message, "⏳ Анализирую...")
+    bot.reply_to(message, "Анализирую...")
  
     try:
-        file_info = bot.get_file(doc.file_id)
-        url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+        file_info  = bot.get_file(doc.file_id)
+        url        = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
         file_bytes = requests.get(url).content
  
-        rows    = run_analysis(file_bytes)
-        report  = format_report(rows, doc.file_name)
-        excel   = build_excel(rows)
+        rows     = run_analysis(file_bytes)
+        report   = format_report(rows, doc.file_name)
+        excel    = build_excel(rows)
         date_str = datetime.now().strftime('%d.%m')
  
         bot.send_message(message.chat.id, report)
         bot.send_document(message.chat.id, excel,
                           visible_file_name=f"Анализ мониторинга {date_str}.xlsx",
-                          caption=f"📎 Полный анализ — {date_str}")
+                          caption=f"Полный анализ — {date_str}")
     except Exception as e:
-        bot.reply_to(message, f"❌ Ошибка: {e}")
+        err = traceback.format_exc()
+        bot.reply_to(message, f"Ошибка: {e}\n\n{err[-800:]}")
+ 
  
 @bot.message_handler(func=lambda m: True)
 def handle_text(message):
-    bot.reply_to(message, "Пришлите файл мониторинга в формате .xlsx 📎")
+    bot.reply_to(message, "Пришлите файл мониторинга в формате .xlsx")
  
-print("✅ Бот запущен (облачный режим)")
-bot.infinity_polling()
-    bot.reply_to(message, "Пришлите файл мониторинга в формате .xlsx 📎")
  
-print("✅ Бот запущен (облачный режим)")
+print("Бот запущен (облачный режим)")
 bot.infinity_polling()
