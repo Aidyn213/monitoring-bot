@@ -165,31 +165,71 @@ def build_excel(rows):
     return buf
  
 # ── Текстовый отчёт ──────────────────────────────────────────────────────────
+def extract_date(filename):
+    """Извлечь дату из имени файла, например 'Тепловая карта 29.05.xlsx' → '29.05'"""
+    import re
+    m = re.search(r'(\d{1,2}[.\-]\d{2}(?:[.\-]\d{2,4})?)', filename)
+    return m.group(1) if m else datetime.now().strftime('%d.%m')
+ 
 def format_report(rows, filename):
-    date_str  = datetime.now().strftime('%d.%m.%Y')
-    risk_rows = sorted(
-        [r for r in rows if r['status'] == 'РИСК' and r.get('pct') and r['name'] != 'АВОКАДО КГ'],
-        key=lambda x: -x['pct'])
+    date_str = extract_date(filename)
+ 
+    # Счётчики
     counts = {}
     for r in rows:
         counts[r['status']] = counts.get(r['status'], 0) + 1
  
     lines = [
         f"📊 Мониторинг цен — {date_str}",
-        f"Файл: {filename}\n",
         f"🔴 Риск: {counts.get('РИСК', 0)}  "
         f"🟡 Дороже: {counts.get('Дороже', 0)}  "
         f"⚪ Норма: {counts.get('Норма', 0)}  "
         f"🟢 Дешевле: {counts.get('Дешевле', 0)}\n",
-        "ТОП рисков:"
     ]
-    for i, r in enumerate(risk_rows[:10], 1):
-        kaspi_str = f" | Каспий: {r['kaspi']:,}" if r['kaspi'] else ""
+ 
+    # ТОП рисков по сегментам: HARD → SOFT → СЕЗОН
+    SEG_ORDER = ['HARD', 'SOFT', 'СЕЗОН']
+    not_ok_statuses = {'РИСК', 'Дороже'}
+ 
+    for seg in SEG_ORDER:
+        seg_risks = sorted(
+            [r for r in rows if r['segment'] == seg
+             and r['status'] == 'РИСК' and r.get('pct') and r['name'] != 'АВОКАДО КГ'],
+            key=lambda x: -x['pct'])
+        if not seg_risks:
+            continue
+        lines.append(f"— {seg} —")
+        for r in seg_risks:
+            kaspi_str = f" | Каспий: {r['kaspi']:,}" if r['kaspi'] else ""
+            lines.append(
+                f"• {r['name']}\n"
+                f"  Магнум: {r['magnum']:,} | Рынок: {r['avg']:,}{kaspi_str} | +{r['pct']}%\n"
+                f"  КМ: {r['km']}"
+            )
+        lines.append("")
+ 
+    # Сводка по КМ — позиции не в норме (Риск + Дороже)
+    km_stats = {}
+    for r in rows:
+        km = r['km']
+        if km == '—':
+            continue
+        km_stats.setdefault(km, {'риск': 0, 'дороже': 0, 'total': 0})
+        km_stats[km]['total'] += 1
+        if r['status'] == 'РИСК':
+            km_stats[km]['риск'] += 1
+        elif r['status'] == 'Дороже':
+            km_stats[km]['дороже'] += 1
+ 
+    lines.append("👤 По ответственным (не в норме):")
+    for km, s in sorted(km_stats.items(), key=lambda x: -(x[1]['риск'] + x[1]['дороже'])):
+        not_ok = s['риск'] + s['дороже']
+        if not_ok == 0:
+            continue
         lines.append(
-            f"{i}. {r['name']}\n"
-            f"   Магнум: {r['magnum']:,} | Рынок: {r['avg']:,}{kaspi_str} | +{r['pct']}%\n"
-            f"   КМ: {r['km']}"
+            f"• {km}: 🔴 {s['риск']} риск, 🟡 {s['дороже']} дороже (из {s['total']} поз.)"
         )
+ 
     return "\n".join(lines)
  
 # ── Хендлеры ─────────────────────────────────────────────────────────────────
