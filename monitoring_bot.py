@@ -316,7 +316,18 @@ def handle_document(message):
         excel    = build_excel(rows)
         date_str = extract_date(doc.file_name)
 
-        bot.send_message(message.chat.id, report)
+        # Разбиваем длинный отчёт на части по 4000 символов
+        MAX = 4000
+        parts = []
+        while len(report) > MAX:
+            split = report.rfind('\n', 0, MAX)
+            if split == -1:
+                split = MAX
+            parts.append(report[:split])
+            report = report[split:].lstrip('\n')
+        parts.append(report)
+        for part in parts:
+            bot.send_message(message.chat.id, part)
         bot.send_document(message.chat.id, excel,
                           visible_file_name=f"Анализ мониторинга {date_str}.xlsx",
                           caption=f"Полный анализ — {date_str}")
